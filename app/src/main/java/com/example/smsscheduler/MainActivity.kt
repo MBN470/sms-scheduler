@@ -1,4 +1,3 @@
-
 package com.example.smsscheduler
 
 import android.Manifest
@@ -245,6 +244,195 @@ fun ComposeScreen() {
                         textDirection = TextDirection.Ltr, textAlign = TextAlign.Left
                     ),
                     placeholder = { Text("09121234567\n+989351234567") }
+                )
+                Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(
+                        if (parsed.bad > 0) "${toFa(parsed.bad)} مورد نامعتبر نادیده گرفته شد" else "",
+                        fontSize = 12.sp, color = MaterialTheme.colorScheme.error
+                    )
+                }
+                Text(
+                    "جداکننده: خط جدید، کاما یا فاصله",
+                    fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            Section {
+                TitleRow("متن پیام", "${toFa(message.length)} کاراکتر · ${toFa(info[0])} پیامک")
+                OutlinedTextField(
+                    value = message, onValueChange = { message = it },
+                    modifier = Modifier.fillMaxWidth().height(130.dp),
+                    placeholder = { Text("متن پیام را بنویسید…") }
+                )
+                if (message.isNotEmpty()) {
+                    Text(
+                        if (unicode) "متن فارسی: هر پیامک تا ۷۰ کاراکتر" else "متن لاتین: هر پیامک تا ۱۶۰ کاراکتر",
+                        Modifier.padding(top = 6.dp),
+                        fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            Section {
+                TitleRow("ارسال با سیم‌کارت")
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    sims.forEachIndexed { idx, s ->
+                        FilterChip(
+                            selected = simIdx == idx, onClick = { simIdx = idx },
+                            label = { Text(s.label, fontSize = 12.sp) },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+            }
+
+            Section {
+                TitleRow("فاصله بین دو پیامک")
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Slider(
+                        value = gap, onValueChange = { gap = it },
+                        valueRange = 5f..180f, steps = 34, modifier = Modifier.weight(1f)
+                    )
+                    Text(
+                        "${toFa(gapSec)} ثانیه", Modifier.padding(start = 12.dp),
+                        fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary
+                    )
+                }
+                if (parsed.valid.size > 1) {
+                    val sec = (parsed.valid.size - 1) * gapSec
+                    Text(
+                        "زمان کل حدود ${if (sec >= 60) toFa(sec / 60) + " دقیقه و " else ""}${toFa(sec % 60)} ثانیه",
+                        fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            Surface(shape = RoundedCornerShape(12.dp), color = warnBg()) {
+                Column(Modifier.padding(12.dp)) {
+                    Text(
+                        "برای جلوگیری از مسدود شدن خط، فاصله‌ی ۳۰ ثانیه یا بیشتر پیشنهاد می‌شود. " +
+                            "فقط برای مخاطبانی بفرستید که رضایت داده‌اند.",
+                        fontSize = 12.sp, color = warnFg(), lineHeight = 20.sp
+                    )
+                    if (!ignoringBattery) {
+                        TextButton(onClick = {
+                            ctx.startActivity(
+                                Intent(
+                                    Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                                    Uri.parse("package:${ctx.packageName}")
+                                )
+                            )
+                        }) { Text("معافیت از بهینه‌سازی باتری (برای ارسال پایدار)", color = warnFg()) }
+                    }
+                }
+            }
+            Spacer(Modifier.height(4.dp))
+        }
+
+        Box(Modifier.padding(16.dp)) {
+            Button(
+                onClick = {
+                    if (granted(ctx, Manifest.permission.SEND_SMS)) startSend()
+                    else launcher.launch(perms.toTypedArray())
+                },
+                enabled = parsed.valid.isNotEmpty() && message.isNotBlank(),
+                modifier = Modifier.fillMaxWidth().height(52.dp)
+            ) { Text("شروع ارسال", fontSize = 16.sp, fontWeight = FontWeight.Bold) }
+        }
+    }
+}
+
+// ---------- Screen 2 ----------
+@Composable
+fun ProgressScreen(st: UiState) {
+    val ctx = LocalContext.current
+    val total = st.items.size
+    val done = st.items.count { it.status != Status.PENDING && it.status != Status.SENDING }
+    val okCount = st.items.count { it.status == Status.SENT || it.status == Status.DELIVERED }
+    val failCount = st.items.count { it.status == Status.FAILED || (st.finished && it.status == Status.PENDING) }
+    val line = when {
+        st.finished -> "${toFa(okCount)} موفق · ${toFa(failCount)} ناموفق"
+        st.paused -> "متوقف شد — برای ادامه بزنید"
+        st.countdown > 0 -> "پیامک بعدی تا ${toFa(st.countdown)} ثانیه دیگر"
+        else -> "در حال ارسال…"
+    }
+
+    Column(Modifier.fillMaxSize().systemBarsPadding()) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 14.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                if (st.finished) "ارسال پایان یافت" else "در حال ارسال",
+                fontSize = 20.sp, fontWeight = FontWeight.Bold
+            )
+            Text(
+                "${st.simLabel} · فاصله ${toFa(st.gap)} ثانیه",
+                fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        Column(
+            Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Section {
+                Text("${toFa(done)} از ${toFa(total)}", fontSize = 32.sp, fontWeight = FontWeight.Bold)
+                LinearProgressIndicator(
+                    progress = { if (total == 0) 0f else done.toFloat() / total },
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp)
+                )
+                Text(line, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Section {
+                st.items.forEachIndexed { idx, it ->
+                    val (label, color) = when (it.status) {
+                        Status.PENDING ->
+                            (if (st.finished) "ارسال نشد" else "در انتظار") to MaterialTheme.colorScheme.onSurfaceVariant
+                        Status.SENDING -> "در حال ارسال" to warnFg()
+                        Status.SENT -> "ارسال شد" to warnFg()
+                        Status.DELIVERED -> "تحویل داده شد" to okColor()
+                        Status.FAILED -> "ناموفق" to MaterialTheme.colorScheme.error
+                    }
+                    Row(
+                        Modifier.fillMaxWidth().padding(vertical = 10.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(it.number, fontSize = 14.sp)
+                        Text(label, fontSize = 12.sp, color = color, fontWeight = FontWeight.Medium)
+                    }
+                    if (idx < st.items.lastIndex) HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+                }
+            }
+            Spacer(Modifier.height(4.dp))
+        }
+
+        Box(Modifier.padding(16.dp)) {
+            if (st.active) {
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedButton(
+                        onClick = { SendState.state.update { it.copy(paused = !it.paused) } },
+                        modifier = Modifier.weight(1f).height(52.dp)
+                    ) { Text(if (st.paused) "ادامه" else "توقف موقت", fontSize = 15.sp) }
+                    Button(
+                        onClick = {
+                            ctx.startService(
+                                Intent(ctx, SendService::class.java).setAction(SendService.ACT_STOP)
+                            )
+                        },
+                        modifier = Modifier.weight(1f).height(52.dp)
+                    ) { Text("لغو", fontSize = 15.sp) }
+                }
+            } else {
+                Button(
+                    onClick = { SendState.state.value = UiState() },
+                    modifier = Modifier.fillMaxWidth().height(52.dp)
+                ) { Text("بازگشت", fontSize = 16.sp, fontWeight = FontWeight.Bold) }
+            }
+        }
+    }
+}placeholder = { Text("09121234567\n+989351234567") }
                 )
                 Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text(
